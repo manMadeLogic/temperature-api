@@ -1,19 +1,19 @@
 #!/usr/bin/env python2.7
 import json
 from datetime import datetime
-from flask import Flask, request, jsonify
+from flask import Flask, request
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import select
 
-home_page = """<p>- `POST` request at `/temp`
-- `GET` request at `/errors`
+home_page = """<p>- `POST` request at `/temp`<br>
+- `GET` request at `/errors`<br>
 - `DELETE` request at `/errors`</p>"""
 DATETIME_FORMAT = '%Y/%m/%d %H:%M:%S'
 
 db = SQLAlchemy()
-app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = "sqlite:///temp_error.db"
-db.init_app(app)
+application = Flask(__name__)
+application.config['SQLALCHEMY_DATABASE_URI'] = "sqlite:///temp_error.db"
+db.init_app(application)
 
 
 class TempError(db.Model):
@@ -21,16 +21,16 @@ class TempError(db.Model):
     data = db.Column(db.String, unique=False, nullable=False)
 
 
-with app.app_context():
+with application.app_context():
     db.create_all()
 
 
-@app.route("/")
+@application.route("/")
 def hello_world():
     return home_page
 
 
-@app.route('/errors', methods=['DELETE', 'GET'])
+@application.route('/errors', methods=['DELETE', 'GET'])
 def errors():
     if request.method == 'DELETE':
         # delete all errors
@@ -43,45 +43,55 @@ def errors():
         result_formatted = []
         for row in result:
             result_formatted.append(row[0])
-        return jsonify({"errors": result_formatted})
+        return json.dumps({"errors": result_formatted})
 
 
-@app.route('/temp', methods=['POST'])
+@application.route('/temp', methods=['POST'])
 def record_temp():
-    data = request.get_data().decode()
-    if data:
-        data = json.loads(data).get('data', '')
-    else:
+    content_type = request.headers["Content-Type"]
+    print(f"""[{content_type}]""")
+    if content_type == "text/plain":
+        data = json.loads(request.get_data().decode()).get('data', '')
+    elif 'multipart/form-data' in content_type:
         data = request.form.get('data', '')
+    else:
+        return "Unsupported content type", 415
     value_list = data.split(':')
     if len(value_list) != 4:
         # wrong format: not 4 ':' separated strings. Based on the requirement, we are not expecting the input to have :
         return store_error_and_respond(data)
-    device_id, epoch_ms, temp_str, temp = value_list
+
     # check each data_field type
+    device_id, epoch_ms, temp_str, temp = value_list
+
     try:
         device_id = int(device_id)
     except ValueError:
         return store_error_and_respond(data)
+    # Check if device_id is out of bound
+    if not 0 <= device_id <= (1 << 31) - 1:
+        return store_error_and_respond(data)
+
     try:
         epoch_ms = int(epoch_ms)
     except ValueError:
         return store_error_and_respond(data)
+    # Check if epoch_ms is out of bound
+    if not 0 <= epoch_ms <= (1 << 63) - 1:
+        return store_error_and_respond(data)
+
     if temp_str != "'Temperature'":
         return store_error_and_respond(data)
+
     try:
         temp = float(temp)
     except ValueError:
         return store_error_and_respond(data)
-    # device_id out of bound
-    if not 0 <= device_id <= (1 << 31) - 1:
-        return store_error_and_respond(data)
-    # epoch_ms out of bound
-    if not 0 <= epoch_ms <= (1 << 63) - 1:
-        return store_error_and_respond(data)
+
     formatted_time = datetime.fromtimestamp(epoch_ms//1000).strftime(DATETIME_FORMAT)
-    if temp > 90:
-        return jsonify({"overtemp": True, "device_id": device_id, "formatted_time": formatted_time})
+
+    if temp >= 90:
+        return json.dumps({"overtemp": True, "device_id": device_id, "formatted_time": formatted_time})
     else:
         return """{"overtemp": false}"""
 
@@ -96,4 +106,4 @@ def store_error_and_respond(data):
 
 
 if __name__ == "__main__":
-    app.run(port=5000)
+    application.run(port=5000)
