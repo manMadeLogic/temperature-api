@@ -1,6 +1,8 @@
 #!/usr/bin/env python2.7
 import json
 from datetime import datetime
+from json import JSONDecodeError
+
 from flask import Flask, request
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import select
@@ -48,10 +50,14 @@ def errors():
 
 @application.route('/temp', methods=['POST'])
 def record_temp():
-    content_type = request.headers["Content-Type"]
-    print(f"""[{content_type}]""")
-    if content_type == "text/plain":
-        data = json.loads(request.get_data().decode()).get('data', '')
+    content_type = request.headers.get("Content-Type", '')
+    print(request.headers)
+    if not content_type or content_type == "text/plain":
+        try:
+            data = json.loads(request.get_data().decode()).get('data', '')
+        except JSONDecodeError:
+            print(request.get_data().decode())
+            return store_error_and_respond(request.get_data().decode())
     elif 'multipart/form-data' in content_type:
         data = request.form.get('data', '')
     else:
